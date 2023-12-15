@@ -1,0 +1,102 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple WebRTC Audio Call</title>
+</head>
+
+<body>
+    <h1>Simple WebRTC Audio Call</h1>
+
+    <button id="connectButton">オファーする</button>
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        document.querySelector("#connectButton").addEventListener("click", async () => {
+            let localStream = await navigator.mediaDevices.getUserMedia({ audio: true });;
+            const audio = document.getElementById('remoteAudio');
+            logg("自分のメディアストリーム", d(), localStream);
+
+            // WebRTC関連の変数
+            const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+            let peerConnection = new RTCPeerConnection(configuration);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            peerConnection.ontrack = (event) => {
+                logg("ontrack", d());
+                const remoteStream = event.streams[0];
+                logg("通話確立！！！", d(), remoteStream);
+                audio.srcObject = remoteStream;
+                audio.play();
+                logg("再生した！", d());
+            };
+
+            // ICE Candidateを生成して送信する関数
+            peerConnection.createOffer().then((sessionDescription) => peerConnection.setLocalDescription(sessionDescription)).catch(e => logg(e));
+            peerConnection.onicecandidate = event => {
+                if (!event.candidate) {
+                    const localDescription = peerConnection.localDescription;
+                    logg("サーバーにSDPを送信", d(), localDescription.type, localDescription.sdp);
+                    socket.emit('message', { type: localDescription.type, sdp: localDescription.sdp });
+                }
+            };
+
+            socket.on('message', (message) => {
+                logg("メッセージされた！", message)
+                // 自分のメッセージには反応しないように
+                if (socket.id != message.from) {
+                    if (message.type === 'offer') {
+                        logg("オファーされた！");
+                        peerConnection = new RTCPeerConnection(configuration);
+                        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                        peerConnection.ontrack = (event) => {
+                            logg("ontrack", d());
+                            const remoteStream = event.streams[0];
+                            logg("通話確立！！！", d(), remoteStream);
+                            audio.srcObject = remoteStream;
+                            audio.play();
+                            logg("再生した！", d());
+                        };
+                        let offer = new RTCSessionDescription(message);
+                        peerConnection.setRemoteDescription(offer).then(() => {
+                            peerConnection.createAnswer().then((sessionDescription) => peerConnection.setLocalDescription(sessionDescription));
+                            peerConnection.onicecandidate = event => {
+                                if (!event.candidate) {
+                                    const localDescription = peerConnection.localDescription;
+                                    logg("サーバーにSDPを送信", d(), localDescription.type, localDescription.sdp);
+                                    socket.emit('message', { type: localDescription.type, sdp: localDescription.sdp });
+                                }
+                            };
+                        });
+                    }
+                    else if (message.type === "answer") {
+                        let answer = new RTCSessionDescription(message);
+                        peerConnection.setRemoteDescription(answer).then(() => {
+                            logg("準備完了らしい", d());
+                        });
+                    }
+                }
+            });
+        });
+        window.onload = async () => {
+
+        };
+        function d() {
+            // return (String(new Date().getTime()).slice(-3) + String(window.performance.now()));
+            return String(new Date().getTime()).slice(-3) + "." + String(window.performance.now());
+        }
+        function logg(...args) {
+            console.log(args);
+            const div = document.createElement("div");
+            div.textContent = args;
+            document.body.append(div);
+        }
+    </script>
+</body>
+
+</html>
