@@ -1,0 +1,377 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple WebRTC Audio Call</title>
+</head>
+
+<body>
+    <div id="login">
+        <button>入室する</button>
+    </div>
+    <button id="audioButton" value="0">音声通話開始</button>
+    <button id="videoButton" value="0">画面共有開始</button>
+    <button id="customButton" value="0">カスタムデータ送信開始</button>
+    <input id="customText" type="text" name="" id="">
+    <div id="chat">
+
+    </div>
+    <audio autoplay></audio>
+    <video autoplay></video>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const users = {};
+        let audioButton;
+        let audioStream;
+        let videoStream;
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let peerConnection;
+        let stableList = [];
+        var displayMediaOptions = {
+            video: {
+                cursor: "always"
+            },
+            audio: false
+        };
+        function rand(length) {
+            const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let result = '';
+
+            for (let i = 0; i < length; i++) {
+                const randomIndex = Math.floor(Math.random() * characters.length);
+                result += characters.charAt(randomIndex);
+            }
+            return result;
+        }
+
+        /** オファー送って良い？ */
+        const audioEmit1 = () => {
+            socket.emit('message', { title: "audio", subject: "1", type: "", sdp: "" });
+        };
+        /** 良いよ */
+        const audioEmit2 = (message) => {
+            if (users[message.from] != undefined || message.subject != "1") return false;
+            console.log(d(), "取得", message.subject, "送信", "2", "次回許容", "3", message.from, "良いよ");
+            users[message.from] = {};
+            socket.emit('tomessage', message.from, { title: "audio", subject: "2", type: "", sdp: "" });
+            users[message.from].allow = "3";
+            return true;
+        };
+        /** はい、オファー */
+        const audioEmit3 = (message) => {
+            if (users[message.from] == undefined) return false;
+            if ("2" != message.subject) return false;
+            console.log(d(), "取得", message.subject, "送信", "3", "次回許容", "4", message.from, "はい、オファー");
+            users[message.from] = {};
+            users[message.from].peerConnection = new RTCPeerConnection(configuration);
+            audioStream.getTracks().forEach(track => users[message.from].peerConnection.addTrack(track, audioStream));
+            users[message.from].peerConnection.ontrack = (event) => {
+                const tmpAudio = new Audio();
+                tmpAudio.autoplay = true;
+                tmpAudio.srcObject = event.streams[0];
+                tmpAudio.play();
+            };
+            users[message.from].peerConnection.createOffer().then((sessionDescription) => {
+                users[message.from].peerConnection.setLocalDescription(sessionDescription);
+                users[message.from].peerConnection.onicecandidate = event => {
+                    if (!event.candidate) {
+                        if (audioButton.value == "1") {
+                            audioButton.value = "2";
+                            audioButton.textContent = "ミュートにする";
+                        }
+                        const localDescription = users[message.from].peerConnection.localDescription;
+                        socket.emit('tomessage', message.from, { title: "audio", subject: "3", type: localDescription.type, sdp: localDescription.sdp });
+                        users[message.from].allow = "4";
+                    }
+                };
+            });
+            return true;
+        };
+        /** ありがとう、アンサー返すね */
+        const audioEmit4 = (message) => {
+            if (users[message.from] == undefined) return false;
+            if ("3" != message.subject || "3" != users[message.from].allow) return false;
+            console.log(d(), "取得", message.subject, "送信", "4", "次回許容", "5", message.from, "ありがとう、アンサー返すね");
+            users[message.from].peerConnection = new RTCPeerConnection(configuration);
+            audioStream.getTracks().forEach(track => users[message.from].peerConnection.addTrack(track, audioStream));
+            users[message.from].peerConnection.ontrack = (event) => {
+                const tmpAudio = new Audio();
+                tmpAudio.autoplay = true;
+                tmpAudio.srcObject = event.streams[0];
+                tmpAudio.play();
+            };
+            let offer = new RTCSessionDescription(message);
+            users[message.from].peerConnection.setRemoteDescription(offer).then(() => {
+                users[message.from].peerConnection.createAnswer().then((sessionDescription) => users[message.from].peerConnection.setLocalDescription(sessionDescription));
+                users[message.from].peerConnection.onicecandidate = event => {
+                    if (!event.candidate) {
+                        if (audioButton.value == "1") {
+                            audioButton.value = "2";
+                            audioButton.textContent = "ミュートにする";
+                        }
+                        const localDescription = users[message.from].peerConnection.localDescription;
+                        socket.emit('tomessage', message.from, { title: "audio", subject: "4", type: localDescription.type, sdp: localDescription.sdp });
+                        users[message.from].allow = "5";
+                    }
+                };
+            });
+            return true;
+        };
+        /** アンサー受け取ったよ。ありがとう */
+        const audioEmit5 = (message) => {
+            if (users[message.from] == undefined) return false;
+            if ("4" != message.subject || "4" != users[message.from].allow) return false;
+            console.log(d(), "取得", message.subject, "送信", "5", "次回許容", "6", message.from, "アンサー受け取ったよ。ありがとう");
+            users[message.from].peerConnection.setRemoteDescription(new RTCSessionDescription(message))
+            socket.emit('tomessage', message.from, { title: "audio", subject: "5", type: "", sdp: "" });
+            users[message.from].allow = "6";
+            return true;
+        };
+        /** アンサー受け取ってくれたんだね、ありがとう */
+        const audioEmit6 = (message) => {
+            if (users[message.from] == undefined) return false;
+            if ("5" != message.subject || "5" != users[message.from].allow) return false;
+            console.log(d(), message.from, "アンサー受け取ってくれたんだね、ありがとう");
+            users[message.from].allow = "7";
+            return true;
+        };
+
+
+        window.onload = async () => {
+            peerConnection = new RTCPeerConnection(configuration);
+            document.querySelector("#login").querySelector("button").addEventListener("click", e => {
+                e.currentTarget.parentNode.style.display = "none";
+            });
+            audioButton = document.querySelector("#audioButton");
+            audioButton.addEventListener("click", async () => {
+                if (audioButton.value == "0") {
+                    audioButton.value = "1";
+                    audioButton.textContent = "処理中...";
+                    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                    setInterval(() => {
+                        audioEmit1();
+                    }, 5000);
+
+                    socket.on('message', (message) => {
+                        audioEmit2(message)
+                        || audioEmit3(message)
+                        || audioEmit4(message)
+                        || audioEmit5(message)
+                        || audioEmit6(message);
+                    });
+                } else if (audioButton.value == "2") {
+                    audioStream.getAudioTracks()[0].enabled = !audioStream.getAudioTracks()[0].enabled;
+                    audioButton.textContent =
+                        audioStream.getAudioTracks()[0].enabled
+                            ? "ミュートにする"
+                            : "ミュート解除"
+                }
+            });
+
+
+
+            videoButton = document.querySelector("#videoButton");
+            const video = document.querySelector('video');
+            videoButton.addEventListener("click", async () => {
+                if (videoButton.value == "0") {
+                    videoButton.value = "1";
+                    videoButton.textContent = "画面共有処理中...";
+                    navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }).then(stream => {
+                        videoStream = stream;
+                        video.srcObject = videoStream;
+                        const stop = setInterval(() => {
+                            peerConnection = new RTCPeerConnection(configuration);
+                            videoStream.getTracks().forEach((track) => {
+                                peerConnection.addTrack(track, videoStream);
+                            });
+                            peerConnection.createOffer().then((sessionDescription) => {
+                                peerConnection.setLocalDescription(sessionDescription);
+                                peerConnection.onicecandidate = (event) => {
+                                    if (!event.candidate) {
+                                        videoButton.value = "2";
+                                        videoButton.textContent = "画面共有停止する";
+                                        const localDescription = peerConnection.localDescription;
+                                        socket.emit('message', { type2: "video", type: localDescription.type, sdp: localDescription.sdp });
+                                    }
+                                };
+                            });
+                            if (videoButton.value == "0") {
+                                clearInterval(stop);
+                            }
+                        }, 5000);
+                    });
+                } else if (videoButton.value == "2") {
+                    videoStream.getTracks().forEach(track => track.stop());
+                    video.srcObject = null;
+                    videoButton.value = "0";
+                }
+            });
+            socket.on('message', async (message) => {
+                if (message.type2 != "video") return;
+                if (users[message.from] == undefined) {
+                    users[message.from] = {}
+                    users[message.from].video = {}
+                    users[message.from].video.active = true;
+                } else if (users[message.from].video == undefined) {
+                    users[message.from].video = {}
+                    users[message.from].video.active = true;
+                } else if (users[message.from].video.active == true) {
+                    return;
+                }
+                if (message.type === 'offer') {
+                    peerConnection = new RTCPeerConnection(configuration);
+                    peerConnection.setRemoteDescription(new RTCSessionDescription(message)).then(() => {
+                        peerConnection.createAnswer().then((sessionDescription) => {
+                            peerConnection.setLocalDescription(sessionDescription);
+                            peerConnection.onicecandidate = event => {
+                                if (!event.candidate) {
+                                    const localDescription = peerConnection.localDescription;
+                                    socket.emit('message', { type2: "video", type: localDescription.type, sdp: localDescription.sdp });
+                                }
+                            };
+                        });
+                    });
+                    peerConnection.ontrack = (event) => {
+                        video.srcObject = event.streams[0];
+                    };
+                }
+                else if (message.type === "answer") {
+                    let answer = new RTCSessionDescription(message);
+                    peerConnection.setRemoteDescription(answer).catch(e => console.log("エラー出ちゃった"));
+                }
+            });
+
+            const customButton = document.querySelector("#customButton");
+            const customText = document.querySelector("#customText");
+            const chat = document.querySelector("#chat");
+            let sendPeerConnectionCustom;
+            let peerConnectionCustom;
+            let sendDataChannel = null;
+            let getDataChannel = null;
+            let dataChannelId = rand(10);
+            customButton.addEventListener("click", () => {
+                if (customButton.value == "0") {
+                    customButton.value = "1";
+                    customButton.textContent = "接続中...";
+                    sendPeerConnectionCustom = new RTCPeerConnection(configuration);
+                    if (getDataChannel != null) {
+                        customButton.value = "2";
+                        customButton.textContent = "カスタムデータ送信";
+                    }
+                    sendDataChannel = sendPeerConnectionCustom.createDataChannel(dataChannelId, { ordered: false });
+                    sendPeerConnectionCustom.createOffer().then((sessionDescription) => {
+                        sendPeerConnectionCustom.setLocalDescription(sessionDescription);
+                        sendPeerConnectionCustom.onicecandidate = event => {
+                            if (!event.candidate) {
+                                customButton.value = "2";
+                                customButton.textContent = "カスタムデータ送信";
+                                const localDescription = sendPeerConnectionCustom.localDescription;
+                                socket.emit('message', { type2: "custom", channelId: dataChannelId, type: localDescription.type, sdp: localDescription.sdp });
+                            }
+                        };
+                    });
+                    sendDataChannel.onmessage = e => {
+                        const div = document.createElement("div");
+                        div.textContent = e.data;
+                        chat.append(div);
+                    }
+                } else if (customButton.value == "2") {
+                    const div = document.createElement("div");
+                    div.textContent = customText.value;
+                    chat.append(div);
+                } else if (customButton.value == "3") {
+                    const div = document.createElement("div");
+                    div.textContent = customText.value;
+                    chat.append(div);
+                    sendDataChannel.send(customText.value);
+                }
+            });
+
+            socket.on('message', (message) => {
+                if (message.type2 != "custom") return;
+                if (users[message.from] == undefined) {
+                    users[message.from] = {}
+                    users[message.from].custom = {}
+                    users[message.from].custom.active = true;
+                } else if (users[message.from].custom == undefined) {
+                    users[message.from].custom = {}
+                    users[message.from].custom.active.active = true;
+                } else if (users[message.from].custom.active == true) {
+                    return;
+                }
+                if (message.type === 'offer') {
+                    peerConnectionCustom = new RTCPeerConnection(configuration);
+                    getDataChannel = peerConnectionCustom.createDataChannel(message.channelId, { ordered: false });
+                    let offer = new RTCSessionDescription(message);
+                    peerConnectionCustom.setRemoteDescription(offer).then(() => {
+                        peerConnectionCustom.createAnswer().then((sessionDescription) => peerConnectionCustom.setLocalDescription(sessionDescription));
+                        peerConnectionCustom.onicecandidate = event => {
+                            if (!event.candidate) {
+                                const localDescription = peerConnectionCustom.localDescription;
+                                socket.emit('message', { type2: "custom", type: localDescription.type, sdp: localDescription.sdp });
+                                peerConnectionCustom.ondatachannel = event => {
+                                    customButton.addEventListener("click", () => event.channel.send(customText.value));
+                                    event.channel.onmessage = e => {
+                                        const div = document.createElement("div");
+                                        div.textContent = e.data;
+                                        chat.append(div);
+                                    }
+                                };
+                            }
+                        };
+                    });
+                }
+                else if (message.type === "answer") {
+                    console.log("カスタムのやつアンサー受信！");
+                    let answer = new RTCSessionDescription(message);
+                    sendPeerConnectionCustom.setRemoteDescription(answer).then(e => customButton.value = "3");
+                }
+            });
+        };
+        function d() {
+            return String(new Date().getTime()).slice(-5);
+        }
+        function logg(...args) {
+            console.log(args);
+            const div = document.createElement("div");
+            div.textContent = args;
+            document.body.append(div);
+        }
+
+    </script>
+    <style>
+        html {
+            & body {
+                margin: 0;
+                padding: 0;
+
+                & video {
+                    width: 100vw;
+                    height: 70vw;
+                    background-color: pink;
+                }
+
+                & #login {
+                    position: fixed;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 100;
+                    background-color: black;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+
+                    & #loginButton {}
+                }
+            }
+        }
+    </style>
+</body>
+
+</html>
